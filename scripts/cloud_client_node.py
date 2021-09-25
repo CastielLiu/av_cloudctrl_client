@@ -24,13 +24,16 @@ class CloudClientNode(CloudClient):
         self.i = 0
 
     def init(self):
-        if not self.login(10):
-            return False
+        self._navpath_dir = rospy.get_param("~navpath_dir", "../paths/")
+        self._root_url = rospy.get_param("~root_url", "36.155.113.13:8000/")
+        self._username = rospy.get_param("~username", "testcar2")
+        self._userid = rospy.get_param("~userid", "testcar2")
+        self._userpasswd = rospy.get_param("~userpasswd", "testcar2")
 
-        self.navpath_dir = rospy.get_param("~navpath_dir", "../paths/")
         self.subSystemState = rospy.Subscriber('/driverless/system_state', SystemState, self.systemStateCallback)
         self.timer1s = rospy.Timer(rospy.Duration(1.0), self.timerCallback_1s)
-        return True
+
+        return CloudClient.init(self)
 
     # 停止运行
     def stop(self):

@@ -62,31 +62,43 @@ class JsonResponse:
 # 自动驾驶客户端
 class CloudClient:
     def __init__(self):
-        # self.root_url = "36.155.113.13:8000/"
-        self.root_url = "127.0.0.1:8000/"
-        self.http_root = "http://" + self.root_url
-        # 核心数据url 用于传输车辆状态与控制指令
-        self.ws_core_url = "ws://" + self.root_url + "ws/autodrive/car/core/"
-        self.http_url = "http://" + self.root_url + "autodrive/"
+        self._root_url = None
+        self._navpath_dir = None
 
-        # 视频数据url
-        self.ws_video_url = "ws://" + self.root_url + "ws/autodrive/car/video/"
+        self.__http_root = None
+        self.__ws_core_url = None
+        self.__http_url = None
+        self.__ws_video_url = None
+        self.__core_ws = None
 
         self.session = requests.session()
-        self.__core_ws = None
         self.ws_login_cv = threading.Condition()
         self.ws_loggedin = False
         self.http_loggedin = False
 
-        self.userid = "testcar1"
-        self.username = "testcar1"
-        self.userpasswd = "testcar1"
-        self.usertoken = ''
+        self._userid = None
+        self._username = None
+        self._userpasswd = None
+        self._usertoken = None
 
-        self.csrf_header = {}
+        self.csrf_header = {}  # csrf防御请求头
         self.running = True
-        self.navpath_dir = "../paths/"  # 默认在~/.ros路径下
         self.request_av_task = RequestAvTask(self.__taskDoneCallback, self.__taskFeedbackCallback)  # 请求自动驾驶任务
+
+    def init(self):
+        if self._root_url is None:
+            print("param _root_url not set!")
+            return False
+
+        self.__http_root = "http://" + self._root_url
+        # 核心数据url 用于传输车辆状态与控制指令
+        self.__ws_core_url = "ws://" + self._root_url + "ws/autodrive/car/core/"
+        self.__http_url = "http://" + self._root_url + "autodrive/"
+
+        # 视频数据url
+        self.__ws_video_url = "ws://" + self._root_url + "ws/autodrive/car/video/"
+
+        return self.login(10)
 
     def check_login(self):
         if self.ws_loggedin and self.http_loggedin:
@@ -94,6 +106,10 @@ class CloudClient:
         return False
 
     def login(self, max_try_times=None):
+        if (self._userid is None and self._username is None) or self._userpasswd is None:
+            print("login infomation missing")
+            return False
+        
         self.running = True
         # http登录 ws登录
         if not self.__login_http(max_try_times) or not self.__login_core_ws():
@@ -123,7 +139,7 @@ class CloudClient:
         # 不传递group时，默认获取用户组 {"group": xxx}
         data = {"type": "req_path_list", "data": {}}
         try:
-            request_pathlist = self.session.post(url=self.http_url, json=data)
+            request_pathlist = self.session.post(url=self.__http_url, json=data)
         except Exception as e:
             return None
         if request_pathlist.status_code != 200:
@@ -145,7 +161,7 @@ class CloudClient:
             # self.session.post(data=data, json=json)
             # data=dict -> 'key1=val1&key2=val2' 与html表单相同
             # json=dict -> {"key1": val1, "key2": val2}
-            request_navpath = self.session.post(url=self.http_url, json=data, headers=self.csrf_header)
+            request_navpath = self.session.post(url=self.__http_url, json=data, headers=self.csrf_header)
         except Exception as e:
             print("download_navpathfile error %s" % e)
             return False
@@ -173,7 +189,7 @@ class CloudClient:
         for path_url in path_urls:
             _, file_name = os.path.split(path_url)
             file_name = os.path.join(path_dir, file_name)
-            path_url = self.http_root[:-1] + path_url
+            path_url = self.__http_root[:-1] + path_url
             try:
                 # stream模式下载文件, 防止大文件直接加载进内存导致内存不足
                 path_request = self.session.get(url=path_url, stream=False)
@@ -201,7 +217,7 @@ class CloudClient:
         self.logout()
 
     def __logout_http(self):
-        http_logout_url = self.http_url + "logout/"
+        http_logout_url = self.__http_url + "logout/"
         try:
             request_logout = self.session.get(url=http_logout_url)
             if request_logout.status_code == 200:
@@ -216,7 +232,7 @@ class CloudClient:
 
     # http登录
     def __login_http(self, max_try_times=None):
-        http_login_url = self.http_url + "login/"
+        http_login_url = self.__http_url + "login/"
 
         try_times = 0
         while self.running and not rospy.is_shutdown():
@@ -232,16 +248,16 @@ class CloudClient:
                 continue
 
             if request_login.status_code != 200:
-                print("连接服务器失败")
+                print("连接服务器失败: %s" % http_login_url)
                 time.sleep(1.0)
                 continue
             break
 
         # http登录验证
         login_dict = dict()
-        login_dict['username'] = self.username
-        login_dict['userid'] = self.userid
-        login_dict['password'] = self.userpasswd
+        login_dict['username'] = self._username
+        login_dict['userid'] = self._userid
+        login_dict['password'] = self._userpasswd
         login_dict["usertype"] = 'car'
         self.csrf_header = {"X-CSRFToken": self.session.cookies.get("csrftoken")}
         # 给会话添加csrf防御头
@@ -255,12 +271,12 @@ class CloudClient:
             if data['code'] != 0:
                 print("login http faild", data.get("msg", ""))
                 return False
-            request_main = self.session.get(url=self.http_url)  # get主页以获取token
+            request_main = self.session.get(url=self.__http_url)  # get主页以获取token
             print (request_main.cookies)
 
-            self.usertoken = request_main.cookies.get('token')
-            self.userid = request_main.cookies.get('userid')
-            if self.usertoken is None or self.userid is None:
+            self._usertoken = request_main.cookies.get('token')
+            self._userid = request_main.cookies.get('userid')
+            if self._usertoken is None or self._userid is None:
                 print("No usertoken or userid in cookies.")
                 return False
         except Exception as e:
@@ -275,7 +291,7 @@ class CloudClient:
 
     # websocket登录
     def __login_core_ws(self):  # 必须启用多线程
-        self.__core_ws = websocket.WebSocketApp(self.ws_core_url,
+        self.__core_ws = websocket.WebSocketApp(self.__ws_core_url,
                                                 on_message=self.__onWebSocketMessage,
                                                 on_error=self.__onWebSocketError,
                                                 on_close=self.__onWebSocketClose,
@@ -306,9 +322,9 @@ class CloudClient:
     def __onWebSocketOpen(self, ws):
         # ws启动后进行服务器登录验证
         userinfo = dict()
-        userinfo["username"] = self.username
-        userinfo["userid"] = self.userid
-        userinfo["password"] = self.userpasswd
+        userinfo["username"] = self._username
+        userinfo["userid"] = self._userid
+        userinfo["password"] = self._userpasswd
         login_data = dict()
         login_data['type'] = "req_login"
         login_data['data'] = userinfo
@@ -339,13 +355,13 @@ class CloudClient:
             self.ws_login_cv.release()
         elif msgtype == "req_start_task":  # 请求执行自动驾驶任务
             response = {'type': msgtype.replace("req", "res"), 'code': -1, 'msg': '', 'data': {}}
-            if data.get("car_id", "") != self.userid:
+            if data.get("car_id", "") != self._userid:
                 response['code'] = 1
                 response['msg'] = "Not given car! Error in webServer"
             else:
                 pathid = data.get("path_id", "")
                 speed = float(data.get("speed", ""))
-                path_dir = os.path.join(self.navpath_dir, 'path_' + str(pathid))
+                path_dir = os.path.join(self._navpath_dir, 'path_' + str(pathid))
                 if not os.path.exists(path_dir):
                     # 创建路径文件夹
                     # 使用makedirs递归创建目录

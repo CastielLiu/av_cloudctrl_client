@@ -1,0 +1,4 @@
+cloud_client_node:
+  root_url: 36.155.113.13:8000/
+  username: testcar2
+  userpasswd: testcar2
