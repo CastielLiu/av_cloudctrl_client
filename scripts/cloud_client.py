@@ -124,6 +124,8 @@ class CloudClient:
             self.__core_ws.close()
 
     def sendCoreData(self, text_data=None, dict_data=None):
+        if not self.check_login():
+            return False
         try:
             if text_data:
                 self.__core_ws.send(text_data)
@@ -246,6 +248,9 @@ class CloudClient:
                 print("连接服务器超时, 正在重新连接")
                 time.sleep(1.0)
                 continue
+            except requests.exceptions.InvalidURL as e:
+                print("InvalidURL", e)
+                return False
 
             if request_login.status_code != 200:
                 print("连接服务器失败: %s" % http_login_url)
